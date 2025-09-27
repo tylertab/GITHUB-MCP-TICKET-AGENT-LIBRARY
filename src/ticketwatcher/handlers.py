@@ -359,6 +359,26 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
 
     result = agent.run_two_rounds(title, body, seed_snips, fetch_callback=_fetch_callback)
 
+    if missing_files or invalid_paths:
+    feedback_parts = []
+    
+    if found_files:
+        feedback_parts.append(f"**✅ Files successfully processed:**\n" + 
+                            "\n".join(f"- `{f}`" for f in found_files))
+    
+    if missing_files:
+        feedback_parts.append(f"**❌ Files mentioned but not found on branch `{base}`:**\n" + 
+                            "\n".join(f"- `{f}`" for f in missing_files))
+    
+    if invalid_paths:
+        feedback_parts.append(f"**🚫 Files outside allowed paths ({', '.join(ALLOWED_PATHS)}):**\n" + 
+                            "\n".join(f"- `{f}`" for f in invalid_paths))
+    
+    if result.get("action") == "propose_patch":
+        feedback_parts.append("ℹ️ *I proceeded with available files and created a fix based on the accessible context.*")
+    
+    add_issue_comment(number, "📝 **File Processing Summary:**\n\n" + "\n\n".join(feedback_parts))
+
     # 3) Enhanced feedback when agent asks for more context
     if result.get("action") == "request_context":
         feedback_parts = ["⚠️ I need more context to propose a safe fix."]
