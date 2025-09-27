@@ -1,0 +1,8 @@
+# wrangler.toml
+name = "ticketwatcher-worker"
+main = "src/index.js"
+compatibility_date = "2025-09-27"
+
+[vars]
+REPO_FULL_NAME = "tylertab/GITHUB-MCP-TICKET-AGENT-LIBRARY"
+PYTHON_BACKEND_URL = "https://your-python-api.com/webhook"
