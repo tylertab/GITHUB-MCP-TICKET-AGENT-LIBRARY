@@ -120,7 +120,6 @@ def file_exists(path: str, ref: str) -> bool:
         r.raise_for_status()
         return False  # unreachable
 
-# (optional hardening) returns "" for empty files, handles missing 'content'
 def get_file_text(path: str, ref: str) -> str:
     with _session() as s:
         r = s.get(f"{GITHUB_API}/repos/{OWNER}/{NAME}/contents/{path}", params={"ref": ref})
@@ -141,4 +140,3 @@ def get_file_text(path: str, ref: str) -> str:
         if content is None:
             return ""
         return base64.b64decode(content).decode("utf-8")
-        
