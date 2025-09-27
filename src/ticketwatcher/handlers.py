@@ -69,47 +69,55 @@ def _path_allowed(path: str) -> bool:
 
 def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> Dict[str, Any] | None:
     """Fetch ±around lines for a file (centered at center_line if given)."""
-    if not _path_allowed(path) or not file_exists(path, base):
+    try:
+        if not _path_allowed(path) or not file_exists(path, base):
+            return None
+        content = get_file_text(path, base)
+        lines = content.splitlines()
+        n = len(lines)
+        if center_line is None or center_line < 1 or center_line > n:
+            # whole file is too big; return head slice
+            start = 1
+            end = min(n, 2 * around)
+        else:
+            start = max(1, center_line - around)
+            end = min(n, center_line + around)
+        code = "\n".join(lines[start - 1 : end])
+        return {"path": path, "start_line": start, "end_line": end, "code": code}
+    except Exception as e:
+        print(f"[warn] Could not fetch slice for {path}: {e}")
         return None
-    content = get_file_text(path, base)
-    lines = content.splitlines()
-    n = len(lines)
-    if center_line is None or center_line < 1 or center_line > n:
-        # whole file is too big; return head slice
-        start = 1
-        end = min(n, 2 * around)
-    else:
-        start = max(1, center_line - around)
-        end = min(n, center_line + around)
-    code = "\n".join(lines[start - 1 : end])
-    return {"path": path, "start_line": start, "end_line": end, "code": code}
 
 
 def _fetch_symbol_slice(path: str, base: str, symbol: str, around: int) -> Dict[str, Any] | None:
     """Naive symbol search to find a 'def <symbol>' or occurrence and slice around it."""
-    if not _path_allowed(path)or not file_exists(path, base):
-        return None
-    content = get_file_text(path, base)
-    lines = content.splitlines()
-    # Look for a definition first
-    def_pat = re.compile(rf'^\s*(def|class)\s+{re.escape(symbol)}\b')
-    idx = None
-    for i, line in enumerate(lines, start=1):
-        if def_pat.search(line):
-            idx = i
-            break
-    if idx is None:
-        # fallback: first occurrence
+    try:
+        if not _path_allowed(path) or not file_exists(path, base):
+            return None
+        content = get_file_text(path, base)
+        lines = content.splitlines()
+        # Look for a definition first
+        def_pat = re.compile(rf'^\s*(def|class)\s+{re.escape(symbol)}\b')
+        idx = None
         for i, line in enumerate(lines, start=1):
-            if symbol in line:
+            if def_pat.search(line):
                 idx = i
                 break
-    if idx is None:
+        if idx is None:
+            # fallback: first occurrence
+            for i, line in enumerate(lines, start=1):
+                if symbol in line:
+                    idx = i
+                    break
+        if idx is None:
+            return None
+        start = max(1, idx - around)
+        end = min(len(lines), idx + around)
+        code = "\n".join(lines[start - 1 : end])
+        return {"path": path, "start_line": start, "end_line": end, "code": code}
+    except Exception as e:
+        print(f"[warn] Could not fetch symbol slice for {path}:{symbol}: {e}")
         return None
-    start = max(1, idx - around)
-    end = min(len(lines), idx + around)
-    code = "\n".join(lines[start - 1 : end])
-    return {"path": path, "start_line": start, "end_line": end, "code": code}
 
 
 # ---------- unified diff parsing / application ----------
@@ -202,11 +210,12 @@ def _apply_unified_diff(base_ref: str, diff_text: str) -> Dict[str, str]:
     for path, hunks in parsed.items():
         if not _path_allowed(path):
             raise ValueError(f"Path not allowed: {path}")
-        # if not file_exists(path, base_ref):
-        #     raise ValueError(f"File does not exist on base: {path}")
-        current = get_file_text(path, base_ref)
-        new_text = _apply_hunks_to_text(current, hunks)
-        updated[path] = new_text
+        try:
+            current = get_file_text(path, base_ref)
+            new_text = _apply_hunks_to_text(current, hunks)
+            updated[path] = new_text
+        except Exception as e:
+            raise ValueError(f"Could not fetch or apply changes to {path}: {e}")
     return updated
 
 
