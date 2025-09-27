@@ -19,6 +19,7 @@ def test_live_issue_to_pr_integration():
       - Repo contains 'src/app/auth.py' with buggy code
     This will create a real Issue and a real DRAFT PR in your repo.
     """
+    os.environ["GITHUB_REPOSITORY"] = "rga7/r_dev"
 
     token = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
     repo = os.getenv("GITHUB_REPOSITORY") or os.getenv("GITHUB_REPO")
