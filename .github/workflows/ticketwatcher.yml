@@ -32,6 +32,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Optional: target PR base branch
-          # TICKETWATCHER_BASE_BRANCH: dev
+          TICKETWATCHER_BASE_BRANCH: alice_dev
         run: |
           python -m ticketwatcher --event-file "$GITHUB_EVENT_PATH"
