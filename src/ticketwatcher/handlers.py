@@ -269,6 +269,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     seed_snips: List[Dict[str, Any]] = []
     missing_files: List[str] = []
     invalid_paths: List[str] = []
+    found_files: List[str] = []
     
     for path, line in seed_specs:
         if not _path_allowed(path):
@@ -280,6 +281,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
         snip = _fetch_slice(path, base, line, AROUND_LINES)
         if snip:
             seed_snips.append(snip)
+            found_files.append(path)
 
     # Early feedback if no valid files found
     if not seed_snips and (missing_files or invalid_paths or not seed_specs):
@@ -357,13 +359,31 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
 
     result = agent.run_two_rounds(title, body, seed_snips, fetch_callback=_fetch_callback)
 
-    # 3) If the agent asked for more (again), give guidance and stop
+    # 3) Enhanced feedback when agent asks for more context
     if result.get("action") == "request_context":
-        add_issue_comment(number,
-            "⚠️ I need more context to propose a safe fix. "
-            "Please include a traceback (`File \"src/...\", line N`) or add `Target: <path.py>` "
-            f"pointing to files that exist on branch `{base}`."
+        feedback_parts = ["⚠️ I need more context to propose a safe fix."]
+        
+        # Report what we found and what was missing from the original issue
+        if found_files:
+            feedback_parts.append(f"**Files I was able to analyze:**\n" + 
+                                "\n".join(f"- `{f}`" for f in found_files))
+        
+        if missing_files:
+            feedback_parts.append(f"**Files mentioned but not found on branch `{base}`:**\n" + 
+                                "\n".join(f"- `{f}`" for f in missing_files))
+        
+        if invalid_paths:
+            feedback_parts.append(f"**Files outside allowed paths:**\n" + 
+                                "\n".join(f"- `{f}`" for f in invalid_paths))
+        
+        feedback_parts.append(
+            f"\n**Please provide:**\n"
+            f"- More traceback lines with valid file paths: `File \"src/app/auth.py\", line 10`\n"
+            f"- Or target hints: `Target: src/app/utils.py`\n"
+            f"- Files must exist on branch `{base}` and be in allowed paths: {', '.join(ALLOWED_PATHS)}"
         )
+        
+        add_issue_comment(number, "\n\n".join(feedback_parts))
         return None
 
     # 4) Validate diff against budgets/paths
@@ -380,7 +400,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     try:
         updated_files = _apply_unified_diff(base, diff)
     except Exception as e:
-        add_issue_comment(number, f"❌ Could not apply patch: {e}")
+        add_issue_comment(number, f"⚠ Could not apply patch: {e}")
         return None
 
     # 6) Create branch, commit updates, open DRAFT PR
@@ -419,7 +439,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
         print(f"[warn] could not comment on issue #{number}: {e}")
 
     return pr_url
-
+    
 def handle_issue_comment_event(event: Dict[str, Any]) -> str | None:
     """
     Optional: keep your '/agent fix' comment trigger. It now just runs the same agent path,
