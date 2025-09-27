@@ -2,8 +2,7 @@ from __future__ import annotations
 import os
 import re
 import json
-import os, re
-from typing import List, Tuple, Iterable, Dict, Any
+from typing import Any, Dict, List, Tuple
 
 from .github_api import (
     get_default_branch,
@@ -22,12 +21,10 @@ from .agent_llm import TicketWatcherAgent  # the class we just finished
 TRIGGER_LABELS = set(os.getenv("TICKETWATCHER_TRIGGER_LABELS", "agent-fix,auto-pr").split(","))
 BRANCH_PREFIX  = os.getenv("TICKETWATCHER_BRANCH_PREFIX", "agent-fix/")
 PR_TITLE_PREF  = os.getenv("TICKETWATCHER_PR_TITLE_PREFIX", "agent: auto-fix for issue")
-ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "").split(",") if p.strip()]
+ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "src/,app/").split(",") if p.strip()]
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
-REPO_ROOT = os.getenv("GITHUB_WORKSPACE")
-REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
 
 # ----------------------------------------------------
 
@@ -38,167 +35,98 @@ def _mk_branch(issue_number: int) -> str:
 
 # ---------- seed parsing & snippet fetch ----------
 
-REPO_ROOT = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
-REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
+_TRACE_RE_1 = re.compile(r'File\s+"([^"]+\.py)"\s*,\s*line\s+(\d+)')
+_TRACE_RE_2 = re.compile(r'((?:src|app)/[^\s:]+\.py):(\d+)')
+_TARGET_HINT_RE = re.compile(r'^Target:\s*(\S+\.py)\s*$', re.MULTILINE)
 
-_RE_PY_FILELINE = re.compile(r'File\s+"([^"]+)"\s*,\s*line\s+(\d+)\b')
-_RE_GENERIC_PATHLINE = re.compile(r'([^\s\'",)\]]+):(\d+)\b')  # token:line
-_RE_TARGET = re.compile(r'^\s*Target:\s*(.+?)\s*$', re.MULTILINE)  # Target: path[ :line]
-
-def _sanitize_path_token(tok: str) -> str:
-    """Strip wrapping quotes/backticks and trailing punctuation."""
-    tok = (tok or "").strip()
-    tok = tok.strip('`"\'')
-
-    # drop trailing punctuation/junk that commonly follows paths in traces
-    tok = re.sub(r'[\'"\s,)\]>]+$', '', tok)
-    return tok
-
-def _to_repo_relative(path: str) -> str:
-    """Return a path relative to the repo root (e.g., 'src/app/auth.py')."""
-    p = (path or "").strip().replace("\\", "/")
-
-    # If it includes '<repo_name>/', trim up to that
-    needle = f"/{REPO_NAME}/"
-    if needle in p:
-        p = p.split(needle, 1)[1]
-
-    # If absolute and under the workspace, relativize
-    try:
-        rel = os.path.relpath(p, REPO_ROOT).replace("\\", "/")
-    except Exception:
-        rel = p
-
-    return rel.lstrip("./").lstrip("/")
-
-def _path_allowed_with(path: str, allowed_prefixes: Iterable[str] | None) -> bool:
-    """Allowlist check; if prefixes empty/None or contains '', allow all."""
-    if not allowed_prefixes or any(a == "" for a in allowed_prefixes):
-        return True
-    p = _to_repo_relative(path)  # ensure repo-relative
-    for a in allowed_prefixes:
-        if not a:
-            return True
-        a = a if a.endswith("/") else a + "/"
-        if p == a[:-1] or p.startswith(a):
-            return True
-    return False
-
-def _path_allowed(path: str) -> bool:
-    """Single-arg convenience using the global ALLOWED_PATHS."""
-    return _path_allowed_with(path, ALLOWED_PATHS)
-
-def parse_stack_text(
-    text: str,
-    *,
-    allowed_prefixes: Iterable[str] | None = None,
-    limit: int = 5,
-) -> List[Tuple[str, int | None]]:
-    """
-    Extract (repo-relative path, line|None) pairs from mixed stack/trace text.
-    Order-preserving, de-duplicated, capped by 'limit'.
-    """
+def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
+    """Return list of (path, line_or_None) parsed from issue body."""
     out: List[Tuple[str, int | None]] = []
-
     if not text:
         return out
-    #print(f'text{text}')
-    lines = text.splitlines()
-
-    # 1) Python "File "...", line N"
-    for line in lines:
-        #print(f'line:{line}')
-        m = _RE_PY_FILELINE.search(line)
-        if not m:
-            continue
-        raw = _sanitize_path_token(m.group(1))
-        path = _to_repo_relative(raw)
-        line_no = int(m.group(2))
-        if path and _path_allowed(path):
-            out.append((path, line_no))
-    #print(f'out1{out}')
-    # 2) Generic "token:LINE"
-    for line in lines:
-        for m in _RE_GENERIC_PATHLINE.finditer(line):
-            raw = _sanitize_path_token(m.group(1))
-            path = _to_repo_relative(raw)
-            line_no = int(m.group(2))
-            if path and _path_allowed(path):
-                out.append((path, line_no))
-
-    # 3) "Target: path" (optional ":line" allowed)
-    for m in _RE_TARGET.finditer(text):
-        raw_full = _sanitize_path_token(m.group(1))
-        # if someone wrote "Target: path:123", capture the line too
-        if ":" in raw_full and raw_full.rsplit(":", 1)[-1].isdigit():
-            raw_path, raw_line = raw_full.rsplit(":", 1)
-            line_no = int(raw_line)
-        else:
-            raw_path, line_no = raw_full, None
-        path = _to_repo_relative(raw_path)
-        if path and _path_allowed(path):
-            out.append((path, line_no))
-
-    # 4) De-dupe while preserving order, then cap
-    seen: set[Tuple[str, int]] = set()
-    uniq: List[Tuple[str, int | None]] = []
-
+    for m in _TRACE_RE_1.finditer(text):
+        out.append((m.group(1), int(m.group(2))))
+    for m in _TRACE_RE_2.finditer(text):
+        out.append((m.group(1), int(m.group(2))))
+    m = _TARGET_HINT_RE.search(text)
+    if m:
+        out.append((m.group(1), None))
+    # de-dupe, keep order
+    seen = set()
+    uniq = []
     for p, ln in out:
         key = (p, ln or 0)
         if key in seen:
             continue
         seen.add(key)
         uniq.append((p, ln))
-        #print(f'uniq{uniq}')
-        if len(uniq) >= max(1, limit):
-            break
+    return uniq[:5]  # bound the seed list
 
-    return uniq
+
+def _path_allowed(path: str) -> bool:
+    return any(path.startswith(pfx if pfx.endswith("/") else pfx + "/") or path.startswith(pfx) for pfx in ALLOWED_PATHS)
 
 
 def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> Dict[str, Any] | None:
     """Fetch ±around lines for a file (centered at center_line if given)."""
-    if not _path_allowed(path) or not file_exists(path, base):
+    try:
+        if not _path_allowed(path):
+            print(f"[warn] Path not allowed: {path}")
+            return None
+        if not file_exists(path, base):
+            print(f"[warn] File does not exist: {path} on branch {base}")
+            return None
+        content = get_file_text(path, base)
+        lines = content.splitlines()
+        n = len(lines)
+        if center_line is None or center_line < 1 or center_line > n:
+            # whole file is too big; return head slice
+            start = 1
+            end = min(n, 2 * around)
+        else:
+            start = max(1, center_line - around)
+            end = min(n, center_line + around)
+        code = "\n".join(lines[start - 1 : end])
+        return {"path": path, "start_line": start, "end_line": end, "code": code}
+    except Exception as e:
+        print(f"[warn] Could not fetch slice for {path}: {e}")
         return None
-    content = get_file_text(path, base)
-    lines = content.splitlines()
-    n = len(lines)
-    if center_line is None or center_line < 1 or center_line > n:
-        # whole file is too big; return head slice
-        start = 1
-        end = min(n, 2 * around)
-    else:
-        start = max(1, center_line - around)
-        end = min(n, center_line + around)
-    code = "\n".join(lines[start - 1 : end])
-    return {"path": path, "start_line": start, "end_line": end, "code": code}
 
 
 def _fetch_symbol_slice(path: str, base: str, symbol: str, around: int) -> Dict[str, Any] | None:
     """Naive symbol search to find a 'def <symbol>' or occurrence and slice around it."""
-    if not _path_allowed(path)or not file_exists(path, base):
-        return None
-    content = get_file_text(path, base)
-    lines = content.splitlines()
-    # Look for a definition first
-    def_pat = re.compile(rf'^\s*(def|class)\s+{re.escape(symbol)}\b')
-    idx = None
-    for i, line in enumerate(lines, start=1):
-        if def_pat.search(line):
-            idx = i
-            break
-    if idx is None:
-        # fallback: first occurrence
+    try:
+        if not _path_allowed(path):
+            print(f"[warn] Path not allowed: {path}")
+            return None
+        if not file_exists(path, base):
+            print(f"[warn] File does not exist: {path} on branch {base}")
+            return None
+        content = get_file_text(path, base)
+        lines = content.splitlines()
+        # Look for a definition first
+        def_pat = re.compile(rf'^\s*(def|class)\s+{re.escape(symbol)}\b')
+        idx = None
         for i, line in enumerate(lines, start=1):
-            if symbol in line:
+            if def_pat.search(line):
                 idx = i
                 break
-    if idx is None:
+        if idx is None:
+            # fallback: first occurrence
+            for i, line in enumerate(lines, start=1):
+                if symbol in line:
+                    idx = i
+                    break
+        if idx is None:
+            return None
+        start = max(1, idx - around)
+        end = min(len(lines), idx + around)
+        code = "\n".join(lines[start - 1 : end])
+        return {"path": path, "start_line": start, "end_line": end, "code": code}
+    except Exception as e:
+        print(f"[warn] Could not fetch symbol slice for {path}:{symbol}: {e}")
         return None
-    start = max(1, idx - around)
-    end = min(len(lines), idx + around)
-    code = "\n".join(lines[start - 1 : end])
-    return {"path": path, "start_line": start, "end_line": end, "code": code}
+
 
 
 # ---------- unified diff parsing / application ----------
@@ -291,11 +219,12 @@ def _apply_unified_diff(base_ref: str, diff_text: str) -> Dict[str, str]:
     for path, hunks in parsed.items():
         if not _path_allowed(path):
             raise ValueError(f"Path not allowed: {path}")
-        # if not file_exists(path, base_ref):
-        #     raise ValueError(f"File does not exist on base: {path}")
-        current = get_file_text(path, base_ref)
-        new_text = _apply_hunks_to_text(current, hunks)
-        updated[path] = new_text
+        try:
+            current = get_file_text(path, base_ref)
+            new_text = _apply_hunks_to_text(current, hunks)
+            updated[path] = new_text
+        except Exception as e:
+            raise ValueError(f"Could not fetch or apply changes to {path}: {e}")
     return updated
 
 
@@ -336,14 +265,49 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     base  = os.getenv("TICKETWATCHER_BASE_BRANCH") or get_default_branch()
 
     # 1) Build seed snippets from traceback/target hints
-    seed_specs = parse_stack_text(body, allowed_prefixes=ALLOWED_PATHS, limit=5)
+    seed_specs = _paths_from_issue_text(body)
     seed_snips: List[Dict[str, Any]] = []
+    missing_files: List[str] = []
+    invalid_paths: List[str] = []
+    
     for path, line in seed_specs:
+        if not _path_allowed(path):
+            invalid_paths.append(path)
+            continue
+        if not file_exists(path, base):
+            missing_files.append(path)
+            continue
         snip = _fetch_slice(path, base, line, AROUND_LINES)
         if snip:
             seed_snips.append(snip)
-    
-    # 2) Call agent (two-round loop)
+
+    # Early feedback if no valid files found
+    if not seed_snips and (missing_files or invalid_paths or not seed_specs):
+        feedback_parts = []
+        
+        if missing_files:
+            feedback_parts.append(f"**Missing files on branch `{base}`:**\n" + 
+                                "\n".join(f"- `{f}`" for f in missing_files))
+        
+        if invalid_paths:
+            feedback_parts.append(f"**Files outside allowed paths ({', '.join(ALLOWED_PATHS)}):**\n" + 
+                                "\n".join(f"- `{f}`" for f in invalid_paths))
+        
+        if not seed_specs:
+            feedback_parts.append("**No file paths detected in issue description.**")
+        
+        feedback_parts.append(
+            "\n**Please provide:**\n"
+            "- A traceback with valid file paths: `File \"src/app/auth.py\", line 10`\n"
+            f"- Or a target hint: `Target: src/app/auth.py`\n"
+            f"- Files must be in allowed paths: {', '.join(ALLOWED_PATHS)}\n"
+            f"- Files must exist on branch `{base}`"
+        )
+        
+        add_issue_comment(number, "⚠️ Cannot process this issue:\n\n" + "\n\n".join(feedback_parts))
+        return None
+
+    # 2) Call agent (two-round loop) 
     agent = TicketWatcherAgent(
         allowed_paths=ALLOWED_PATHS,
         max_files=MAX_FILES,
@@ -353,17 +317,42 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
 
     def _fetch_callback(needs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
+        callback_missing: List[str] = []
+        callback_invalid: List[str] = []
+        
         for n in needs:
             path = n.get("path", "")
             line = n.get("line")
             symbol = n.get("symbol")
             around = int(n.get("around_lines") or AROUND_LINES)
+            
+            if not _path_allowed(path):
+                callback_invalid.append(path)
+                continue
+            if not file_exists(path, base):
+                callback_missing.append(path)
+                continue
+                
             if symbol:
                 sn = _fetch_symbol_slice(path, base, symbol, around)
             else:
                 sn = _fetch_slice(path, base, line, around)
             if sn:
                 results.append(sn)
+        
+        # If agent requested files that don't exist, provide feedback
+        if callback_missing or callback_invalid:
+            feedback_parts = []
+            if callback_missing:
+                feedback_parts.append(f"**Files not found on branch `{base}`:**\n" + 
+                                    "\n".join(f"- `{f}`" for f in callback_missing))
+            if callback_invalid:
+                feedback_parts.append(f"**Files outside allowed paths:**\n" + 
+                                    "\n".join(f"- `{f}`" for f in callback_invalid))
+            
+            add_issue_comment(number, "⚠️ Agent requested additional files that don't exist:\n\n" + 
+                            "\n\n".join(feedback_parts))
+        
         return results
 
     result = agent.run_two_rounds(title, body, seed_snips, fetch_callback=_fetch_callback)
@@ -372,7 +361,8 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     if result.get("action") == "request_context":
         add_issue_comment(number,
             "⚠️ I need more context to propose a safe fix. "
-            "Please include a traceback (`File \"src/...\", line N`) or add `Target: <path.py>`."
+            "Please include a traceback (`File \"src/...\", line N`) or add `Target: <path.py>` "
+            f"pointing to files that exist on branch `{base}`."
         )
         return None
 
