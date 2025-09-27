@@ -1,12 +1,25 @@
 [build-system]
-requires = ["setuptools"]
+requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "ticketwatcher"
 version = "0.1.0"
+description = "Automated code-fixing agent and GitHub issue/PR orchestrator"
+readme = "README.md"
 requires-python = ">=3.9"
-dependencies = ["requests"]
+
+# Optional: declare runtime deps here too (nice for `pip install .`)
+# If you do this, you can simplify your Actions step to just `pip install .`
+dependencies = [
+  "openai>=1.0.0",
+  "python-dotenv>=1.0.0",
+  "requests>=2.31.0"
+]
+
+# Optional entry point if you want `ticketwatcher` CLI (in addition to `python -m ticketwatcher`)
+[project.scripts]
+ticketwatcher = "ticketwatcher.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
