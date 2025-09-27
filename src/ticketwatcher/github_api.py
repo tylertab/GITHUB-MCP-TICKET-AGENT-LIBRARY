@@ -121,6 +121,7 @@ def file_exists(path: str, ref: str) -> bool:
         return False  # unreachable
 
 # (optional hardening) returns "" for empty files, handles missing 'content'
+
 def get_file_text(path: str, ref: str) -> str:
     with _session() as s:
         r = s.get(f"{GITHUB_API}/repos/{OWNER}/{NAME}/contents/{path}", params={"ref": ref})
@@ -128,6 +129,15 @@ def get_file_text(path: str, ref: str) -> str:
             return ""
         r.raise_for_status()
         data = r.json()
+        
+        # Handle case where API returns a list (directory) instead of a file
+        if isinstance(data, list):
+            return ""  # It's a directory, not a file
+            
+        # Handle case where data is not a dict
+        if not isinstance(data, dict):
+            return ""
+            
         content = data.get("content")
         if content is None:
             return ""
