@@ -2,7 +2,8 @@ from __future__ import annotations
 import os
 import re
 import json
-from typing import Any, Dict, List, Tuple
+import os, re
+from typing import List, Tuple, Iterable, Dict, Any
 
 from .github_api import (
     get_default_branch,
@@ -21,10 +22,12 @@ from .agent_llm import TicketWatcherAgent  # the class we just finished
 TRIGGER_LABELS = set(os.getenv("TICKETWATCHER_TRIGGER_LABELS", "agent-fix,auto-pr").split(","))
 BRANCH_PREFIX  = os.getenv("TICKETWATCHER_BRANCH_PREFIX", "agent-fix/")
 PR_TITLE_PREF  = os.getenv("TICKETWATCHER_PR_TITLE_PREFIX", "agent: auto-fix for issue")
-ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "src/,app/").split(",") if p.strip()]
+ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "").split(",") if p.strip()]
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
+REPO_ROOT = os.getenv("GITHUB_WORKSPACE")
+REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
 
 # ----------------------------------------------------
 
@@ -35,36 +38,122 @@ def _mk_branch(issue_number: int) -> str:
 
 # ---------- seed parsing & snippet fetch ----------
 
-_TRACE_RE_1 = re.compile(r'File\s+"([^"]+\.py)"\s*,\s*line\s+(\d+)')
-_TRACE_RE_2 = re.compile(r'((?:src|app)/[^\s:]+\.py):(\d+)')
-_TARGET_HINT_RE = re.compile(r'^Target:\s*(\S+\.py)\s*$', re.MULTILINE)
+REPO_ROOT = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
+REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
 
-def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
-    """Return list of (path, line_or_None) parsed from issue body."""
+_RE_PY_FILELINE = re.compile(r'File\s+"([^"]+)"\s*,\s*line\s+(\d+)\b')
+_RE_GENERIC_PATHLINE = re.compile(r'([^\s\'",)\]]+):(\d+)\b')  # token:line
+_RE_TARGET = re.compile(r'^\s*Target:\s*(.+?)\s*$', re.MULTILINE)  # Target: path[ :line]
+
+def _sanitize_path_token(tok: str) -> str:
+    """Strip wrapping quotes/backticks and trailing punctuation."""
+    tok = (tok or "").strip()
+    tok = tok.strip('`"\'')
+
+    # drop trailing punctuation/junk that commonly follows paths in traces
+    tok = re.sub(r'[\'"\s,)\]>]+$', '', tok)
+    return tok
+
+def _to_repo_relative(path: str) -> str:
+    """Return a path relative to the repo root (e.g., 'src/app/auth.py')."""
+    p = (path or "").strip().replace("\\", "/")
+
+    # If it includes '<repo_name>/', trim up to that
+    needle = f"/{REPO_NAME}/"
+    if needle in p:
+        p = p.split(needle, 1)[1]
+
+    # If absolute and under the workspace, relativize
+    try:
+        rel = os.path.relpath(p, REPO_ROOT).replace("\\", "/")
+    except Exception:
+        rel = p
+
+    return rel.lstrip("./").lstrip("/")
+
+def _path_allowed_with(path: str, allowed_prefixes: Iterable[str] | None) -> bool:
+    """Allowlist check; if prefixes empty/None or contains '', allow all."""
+    if not allowed_prefixes or any(a == "" for a in allowed_prefixes):
+        return True
+    p = _to_repo_relative(path)  # ensure repo-relative
+    for a in allowed_prefixes:
+        if not a:
+            return True
+        a = a if a.endswith("/") else a + "/"
+        if p == a[:-1] or p.startswith(a):
+            return True
+    return False
+
+def _path_allowed(path: str) -> bool:
+    """Single-arg convenience using the global ALLOWED_PATHS."""
+    return _path_allowed_with(path, ALLOWED_PATHS)
+
+def parse_stack_text(
+    text: str,
+    *,
+    allowed_prefixes: Iterable[str] | None = None,
+    limit: int = 5,
+) -> List[Tuple[str, int | None]]:
+    """
+    Extract (repo-relative path, line|None) pairs from mixed stack/trace text.
+    Order-preserving, de-duplicated, capped by 'limit'.
+    """
     out: List[Tuple[str, int | None]] = []
+
     if not text:
         return out
-    for m in _TRACE_RE_1.finditer(text):
-        out.append((m.group(1), int(m.group(2))))
-    for m in _TRACE_RE_2.finditer(text):
-        out.append((m.group(1), int(m.group(2))))
-    m = _TARGET_HINT_RE.search(text)
-    if m:
-        out.append((m.group(1), None))
-    # de-dupe, keep order
-    seen = set()
-    uniq = []
+    #print(f'text{text}')
+    lines = text.splitlines()
+
+    # 1) Python "File "...", line N"
+    for line in lines:
+        #print(f'line:{line}')
+        m = _RE_PY_FILELINE.search(line)
+        if not m:
+            continue
+        raw = _sanitize_path_token(m.group(1))
+        path = _to_repo_relative(raw)
+        line_no = int(m.group(2))
+        if path and _path_allowed(path):
+            out.append((path, line_no))
+    #print(f'out1{out}')
+    # 2) Generic "token:LINE"
+    for line in lines:
+        for m in _RE_GENERIC_PATHLINE.finditer(line):
+            raw = _sanitize_path_token(m.group(1))
+            path = _to_repo_relative(raw)
+            line_no = int(m.group(2))
+            if path and _path_allowed(path):
+                out.append((path, line_no))
+
+    # 3) "Target: path" (optional ":line" allowed)
+    for m in _RE_TARGET.finditer(text):
+        raw_full = _sanitize_path_token(m.group(1))
+        # if someone wrote "Target: path:123", capture the line too
+        if ":" in raw_full and raw_full.rsplit(":", 1)[-1].isdigit():
+            raw_path, raw_line = raw_full.rsplit(":", 1)
+            line_no = int(raw_line)
+        else:
+            raw_path, line_no = raw_full, None
+        path = _to_repo_relative(raw_path)
+        if path and _path_allowed(path):
+            out.append((path, line_no))
+
+    # 4) De-dupe while preserving order, then cap
+    seen: set[Tuple[str, int]] = set()
+    uniq: List[Tuple[str, int | None]] = []
+
     for p, ln in out:
         key = (p, ln or 0)
         if key in seen:
             continue
         seen.add(key)
         uniq.append((p, ln))
-    return uniq[:5]  # bound the seed list
+        #print(f'uniq{uniq}')
+        if len(uniq) >= max(1, limit):
+            break
 
-
-def _path_allowed(path: str) -> bool:
-    return any(path.startswith(pfx if pfx.endswith("/") else pfx + "/") or path.startswith(pfx) for pfx in ALLOWED_PATHS)
+    return uniq
 
 
 def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> Dict[str, Any] | None:
@@ -247,13 +336,13 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     base  = os.getenv("TICKETWATCHER_BASE_BRANCH") or get_default_branch()
 
     # 1) Build seed snippets from traceback/target hints
-    seed_specs = _paths_from_issue_text(body)
+    seed_specs = parse_stack_text(body, allowed_prefixes=ALLOWED_PATHS, limit=5)
     seed_snips: List[Dict[str, Any]] = []
     for path, line in seed_specs:
         snip = _fetch_slice(path, base, line, AROUND_LINES)
         if snip:
             seed_snips.append(snip)
-
+    
     # 2) Call agent (two-round loop)
     agent = TicketWatcherAgent(
         allowed_paths=ALLOWED_PATHS,
