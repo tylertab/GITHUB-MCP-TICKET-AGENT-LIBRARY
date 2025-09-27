@@ -41,9 +41,22 @@ def get_head_sha(branch: str) -> str:
         r.raise_for_status()
         return r.json()["object"]["sha"]
 
-def create_branch(branch: str, from_sha: Optional[str] = None) -> None:
+# --- CHANGED: allow passing a base branch OR a specific SHA ---
+def create_branch(branch: str, base: Optional[str] = None, from_sha: Optional[str] = None) -> None:
+    """
+    Create 'branch' from either:
+      - from_sha (exact SHA), or
+      - base (branch name), or
+      - the repo's default branch if neither provided.
+
+    Back-compat: handlers can call create_branch(branch, base).
+    """
     if from_sha is None:
-        from_sha = get_head_sha(get_default_branch())
+        if base:
+            from_sha = get_head_sha(base)
+        else:
+            from_sha = get_head_sha(get_default_branch())
+
     with _session() as s:
         r = s.post(f"{GITHUB_API}/repos/{OWNER}/{NAME}/git/refs", json={
             "ref": f"refs/heads/{branch}",
@@ -95,6 +108,18 @@ def add_labels(issue_number: int, labels: list[str]) -> None:
         r = s.post(f"{GITHUB_API}/repos/{OWNER}/{NAME}/issues/{issue_number}/labels", json={"labels": labels})
         r.raise_for_status()
 
+# --- NEW: used by handlers to validate a target file on a given ref ---
+def file_exists(path: str, ref: str) -> bool:
+    with _session() as s:
+        r = s.get(f"{GITHUB_API}/repos/{OWNER}/{NAME}/contents/{path}", params={"ref": ref})
+        if r.status_code == 200:
+            return True
+        if r.status_code == 404:
+            return False
+        r.raise_for_status()
+        return False  # unreachable
+
+# (optional hardening) returns "" for empty files, handles missing 'content'
 def get_file_text(path: str, ref: str) -> str:
     with _session() as s:
         r = s.get(f"{GITHUB_API}/repos/{OWNER}/{NAME}/contents/{path}", params={"ref": ref})
@@ -102,4 +127,7 @@ def get_file_text(path: str, ref: str) -> str:
             return ""
         r.raise_for_status()
         data = r.json()
-        return base64.b64decode(data["content"]).decode("utf-8")
+        content = data.get("content")
+        if content is None:
+            return ""
+        return base64.b64decode(content).decode("utf-8")
