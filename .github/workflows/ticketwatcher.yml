@@ -30,7 +30,7 @@ jobs:
       - name: Run TicketWatcher
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GITHUB_EVENT_NAME: ${{ github.event_name }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
           # Optional: target PR base branch
           # TICKETWATCHER_BASE_BRANCH: dev
         run: |

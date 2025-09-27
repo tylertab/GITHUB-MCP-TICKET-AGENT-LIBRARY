@@ -94,3 +94,12 @@ def add_labels(issue_number: int, labels: list[str]) -> None:
     with _session() as s:
         r = s.post(f"{GITHUB_API}/repos/{OWNER}/{NAME}/issues/{issue_number}/labels", json={"labels": labels})
         r.raise_for_status()
+
+def get_file_text(path: str, ref: str) -> str:
+    with _session() as s:
+        r = s.get(f"{GITHUB_API}/repos/{OWNER}/{NAME}/contents/{path}", params={"ref": ref})
+        if r.status_code == 404:
+            return ""
+        r.raise_for_status()
+        data = r.json()
+        return base64.b64decode(data["content"]).decode("utf-8")
