@@ -70,7 +70,11 @@ def _path_allowed(path: str) -> bool:
 def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> Dict[str, Any] | None:
     """Fetch ±around lines for a file (centered at center_line if given)."""
     try:
-        if not _path_allowed(path) or not file_exists(path, base):
+        if not _path_allowed(path):
+            print(f"[warn] Path not allowed: {path}")
+            return None
+        if not file_exists(path, base):
+            print(f"[warn] File does not exist: {path} on branch {base}")
             return None
         content = get_file_text(path, base)
         lines = content.splitlines()
@@ -92,7 +96,11 @@ def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> 
 def _fetch_symbol_slice(path: str, base: str, symbol: str, around: int) -> Dict[str, Any] | None:
     """Naive symbol search to find a 'def <symbol>' or occurrence and slice around it."""
     try:
-        if not _path_allowed(path) or not file_exists(path, base):
+        if not _path_allowed(path):
+            print(f"[warn] Path not allowed: {path}")
+            return None
+        if not file_exists(path, base):
+            print(f"[warn] File does not exist: {path} on branch {base}")
             return None
         content = get_file_text(path, base)
         lines = content.splitlines()
@@ -118,6 +126,7 @@ def _fetch_symbol_slice(path: str, base: str, symbol: str, around: int) -> Dict[
     except Exception as e:
         print(f"[warn] Could not fetch symbol slice for {path}:{symbol}: {e}")
         return None
+
 
 
 # ---------- unified diff parsing / application ----------
@@ -258,12 +267,47 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     # 1) Build seed snippets from traceback/target hints
     seed_specs = _paths_from_issue_text(body)
     seed_snips: List[Dict[str, Any]] = []
+    missing_files: List[str] = []
+    invalid_paths: List[str] = []
+    
     for path, line in seed_specs:
+        if not _path_allowed(path):
+            invalid_paths.append(path)
+            continue
+        if not file_exists(path, base):
+            missing_files.append(path)
+            continue
         snip = _fetch_slice(path, base, line, AROUND_LINES)
         if snip:
             seed_snips.append(snip)
 
-    # 2) Call agent (two-round loop)
+    # Early feedback if no valid files found
+    if not seed_snips and (missing_files or invalid_paths or not seed_specs):
+        feedback_parts = []
+        
+        if missing_files:
+            feedback_parts.append(f"**Missing files on branch `{base}`:**\n" + 
+                                "\n".join(f"- `{f}`" for f in missing_files))
+        
+        if invalid_paths:
+            feedback_parts.append(f"**Files outside allowed paths ({', '.join(ALLOWED_PATHS)}):**\n" + 
+                                "\n".join(f"- `{f}`" for f in invalid_paths))
+        
+        if not seed_specs:
+            feedback_parts.append("**No file paths detected in issue description.**")
+        
+        feedback_parts.append(
+            "\n**Please provide:**\n"
+            "- A traceback with valid file paths: `File \"src/app/auth.py\", line 10`\n"
+            f"- Or a target hint: `Target: src/app/auth.py`\n"
+            f"- Files must be in allowed paths: {', '.join(ALLOWED_PATHS)}\n"
+            f"- Files must exist on branch `{base}`"
+        )
+        
+        add_issue_comment(number, "⚠️ Cannot process this issue:\n\n" + "\n\n".join(feedback_parts))
+        return None
+
+    # 2) Call agent (two-round loop) 
     agent = TicketWatcherAgent(
         allowed_paths=ALLOWED_PATHS,
         max_files=MAX_FILES,
@@ -273,17 +317,42 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
 
     def _fetch_callback(needs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         results: List[Dict[str, Any]] = []
+        callback_missing: List[str] = []
+        callback_invalid: List[str] = []
+        
         for n in needs:
             path = n.get("path", "")
             line = n.get("line")
             symbol = n.get("symbol")
             around = int(n.get("around_lines") or AROUND_LINES)
+            
+            if not _path_allowed(path):
+                callback_invalid.append(path)
+                continue
+            if not file_exists(path, base):
+                callback_missing.append(path)
+                continue
+                
             if symbol:
                 sn = _fetch_symbol_slice(path, base, symbol, around)
             else:
                 sn = _fetch_slice(path, base, line, around)
             if sn:
                 results.append(sn)
+        
+        # If agent requested files that don't exist, provide feedback
+        if callback_missing or callback_invalid:
+            feedback_parts = []
+            if callback_missing:
+                feedback_parts.append(f"**Files not found on branch `{base}`:**\n" + 
+                                    "\n".join(f"- `{f}`" for f in callback_missing))
+            if callback_invalid:
+                feedback_parts.append(f"**Files outside allowed paths:**\n" + 
+                                    "\n".join(f"- `{f}`" for f in callback_invalid))
+            
+            add_issue_comment(number, "⚠️ Agent requested additional files that don't exist:\n\n" + 
+                            "\n\n".join(feedback_parts))
+        
         return results
 
     result = agent.run_two_rounds(title, body, seed_snips, fetch_callback=_fetch_callback)
@@ -292,7 +361,8 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     if result.get("action") == "request_context":
         add_issue_comment(number,
             "⚠️ I need more context to propose a safe fix. "
-            "Please include a traceback (`File \"src/...\", line N`) or add `Target: <path.py>`."
+            "Please include a traceback (`File \"src/...\", line N`) or add `Target: <path.py>` "
+            f"pointing to files that exist on branch `{base}`."
         )
         return None
 
