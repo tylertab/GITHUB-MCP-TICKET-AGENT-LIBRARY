@@ -96,7 +96,8 @@ def create_pr(title: str, head: str, base: Optional[str] = None, body: str = "",
             "draft": draft
         })
         r.raise_for_status()
-        return r.json()["html_url"]
+        data = r.json()
+        return data["html_url"], data["number"]
 
 def add_issue_comment(issue_number: int, body: str) -> None:
     with _session() as s:

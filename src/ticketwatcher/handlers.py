@@ -315,7 +315,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
             branch=branch,
         )
 
-    pr_url = create_pr(
+    pr_url, pr_number = create_pr(
         title=f"{PR_TITLE_PREF} #{number}",
         head=branch,
         base=base,
@@ -323,17 +323,23 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
         draft=True,
     )
 
-    # 7) Comment summary back on Issue
+     # Comment summary back on the PR (use PR number for /issues/{number}/comments)
     notes = result.get("notes", "")
-    add_issue_comment(number,
+    pr_comment = (
         f"✅ Draft PR opened: {pr_url}\n\n"
         f"**Branch:** `{branch}`  •  **Base:** `{base}`\n"
         f"**Files touched:** {files_touched}  •  **Changed lines:** {changed_lines}\n\n"
         f"{('Notes: ' + notes) if notes else ''}"
     )
+    add_issue_comment(pr_number, pr_comment)
+
+    # (Optional) also notify the original issue if you want
+    try:
+        add_issue_comment(number, f"Draft PR opened: {pr_url}")
+    except Exception as e:
+        print(f"[warn] could not comment on issue #{number}: {e}")
 
     return pr_url
-
 
 def handle_issue_comment_event(event: Dict[str, Any]) -> str | None:
     """

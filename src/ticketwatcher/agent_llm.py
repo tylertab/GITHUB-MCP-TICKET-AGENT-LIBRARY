@@ -1,6 +1,7 @@
 import os
 import json
 import re
+from string import Template
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 
@@ -80,35 +81,37 @@ class TicketWatcherAgent:
         )
 
         self.user_template = user_prompt_template or """
-            "TICKET\n"
-            "Title: {ticket_title}\n"
-            "Body:\n"
-            "{ticket_body_trimmed}\n\n"
-            "CONSTRAINTS\n"
-            "allowed_paths: {allowed_paths_csv}\n"
-            "max_files: {max_files}\n"
-            "max_total_lines: {max_total_lines}\n"
-            "default_around_lines: {around_lines}\n"
-            "route: {route_hint}\n\n"
-            "CURRENT SNIPPETS\n"
-            "{snippets_block}\n"
-            "# Each snippet uses this format, repeated 0..N times:\n"
-            "# --- path: <repo-relative-path>\n"
-            "# --- start_line: <int>\n"
-            "# --- end_line: <int>\n"
-            "# --- code:\n"
-            "# <code lines…>\n\n"
-            "YOUR TASK\n"
-            "Return ONE of:\n"
-            '(A) { "action": "request_context", "needs": [ {path, symbol|null, line|null, around_lines}... ], "reason": "…" }\n'
-            "    - Use this if more slices are needed. Keep requests inside allowed_paths.\n"
-            "    - Use symbol for functions/classes when known; otherwise provide a line.\n"
-            '(B) { "action": "propose_patch", "format": "unified_diff", "diff": "...", "files_touched": [...], "estimated_changed_lines": <int>, "notes": "…" }\n'
-            "    - Unified diff must apply cleanly to current code.\n"
-            "    - Respect max_files and max_total_lines; if exceeded, choose (A) instead.\n"
-            "OUTPUT MUST BE A SINGLE JSON OBJECT ONLY.\n"
-                                                      """
-                                
+TICKET
+Title: $ticket_title
+Body:
+$ticket_body_trimmed
+
+CONSTRAINTS
+allowed_paths: $allowed_paths_csv
+max_files: $max_files
+max_total_lines: $max_total_lines
+default_around_lines: $around_lines
+route: $route_hint
+
+CURRENT SNIPPETS
+$snippets_block
+# Each snippet uses this format, repeated 0..N times:
+# --- path: <repo-relative-path>
+# --- start_line: <int>
+# --- end_line: <int>
+# --- code:
+# <code lines…>
+
+YOUR TASK
+Return ONE of:
+(A) { "action": "request_context", "needs": [ { "path": "<string>", "symbol": "<string|null>", "line": "<int|null>", "around_lines": <int> } ... ], "reason": "..." }
+    - Use this if more slices are needed. Keep requests inside allowed_paths.
+    - Use symbol for functions/classes when known; otherwise provide a line.
+(B) { "action": "propose_patch", "format": "unified_diff", "diff": "...", "files_touched": ["..."], "estimated_changed_lines": <int>, "notes": "..." }
+    - Unified diff must apply cleanly to current code.
+    - Respect max_files and max_total_lines; if exceeded, choose (A) instead.
+OUTPUT MUST BE A SINGLE JSON OBJECT ONLY.
+"""  
         
 
     # ---------- public entry points ----------
@@ -170,7 +173,7 @@ class TicketWatcherAgent:
         ticket_body_trimmed = (ticket_body or "")[:trim_body_chars]
         snippets_block = self._format_snippets_block(snippets)
 
-        return self.user_template.format(
+        return Template(self.user_template).safe_substitute(
             ticket_title=ticket_title or "",
             ticket_body_trimmed=ticket_body_trimmed,
             allowed_paths_csv=",".join(self.allowed_paths),
