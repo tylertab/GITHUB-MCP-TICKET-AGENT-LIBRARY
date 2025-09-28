@@ -21,6 +21,7 @@ class TicketWatcherConfig:
     repo_name: str
 
 
+
 def _resolve_repo_root() -> str:
     return os.getenv("GITHUB_WORKSPACE") or os.getcwd()
 

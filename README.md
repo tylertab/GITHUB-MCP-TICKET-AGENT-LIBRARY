@@ -85,15 +85,9 @@ graph TD
 ```
 
 ## 🛠️ Technologies Used
-### Core
 - **Python 3.9+** with typing and dataclasses
 - **OpenAI GPT-4o** (or GPT-4) for agent reasoning
 - **GitHub REST & GraphQL APIs** via `requests`
-
-### Supporting Libraries
-- `pytest` for tests
-- `pydantic`-style validation (lightweight dataclasses instead)
-- `python-dotenv` (optional) for local environment variable loading
 
 ## 🧭 Onboarding Guide
 Follow these steps to get a local development environment running in under 10 minutes.
@@ -108,7 +102,8 @@ Follow these steps to get a local development environment running in under 10 mi
 
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/GITHUB-MCP-TICKET-AGENT-LIBRARY.git
+git clone https://github.com/tylertab/GITHUB-MCP-TICKET-AGENT-LIBRARY.git
+
 cd GITHUB-MCP-TICKET-AGENT-LIBRARY
 ```
 
@@ -233,7 +228,7 @@ The bootstrap script wires up npm dependencies and a `.dev.vars` template so you
 | --- | --- | --- |
 | `ModuleNotFoundError: app.utils.stringy` | Sample app tests expect the sanitized helper module | Ensure `PYTHONPATH=src` when running tests |
 | Workflow exits with `No event file found` | CLI run outside GitHub Actions without `--event-file` | Provide a local payload file via `--event-file path.json` |
-| Agent refuses to touch files outside `src/` | Allowlist set to a restrictive value | Set `ALLOWED_PATHS=""` to allow full access or add directories explicitly |
+| Agent refuses to touch files outside `src/` | Allowlist set to default | Set `ALLOWED_PATHS=""` to allow full access or add directories explicitly |
 | `scripts/live_test.py` fails locally | Missing GitHub token | Export `GITHUB_TOKEN`/`GH_TOKEN` when running the integration test |
 
 ## 📄 License

@@ -47,6 +47,7 @@ class TicketWatcherAgent:
             # Honor explicit []/ [""] inputs from callers by only falling back to
             # environment parsing when the argument is None.
             self.allowed_paths = parse_allowed_paths_env(os.getenv("ALLOWED_PATHS"))
+
         else:
             # Copy to avoid accidental mutation and preserve an explicit [] which
             # now signifies "allow everything".
