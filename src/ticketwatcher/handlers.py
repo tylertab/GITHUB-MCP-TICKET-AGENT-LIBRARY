@@ -21,7 +21,7 @@ from .agent_llm import TicketWatcherAgent  # the class we just finished
 TRIGGER_LABELS = set(os.getenv("TICKETWATCHER_TRIGGER_LABELS", "agent-fix,auto-pr").split(","))
 BRANCH_PREFIX  = os.getenv("TICKETWATCHER_BRANCH_PREFIX", "agent-fix/")
 PR_TITLE_PREF  = os.getenv("TICKETWATCHER_PR_TITLE_PREFIX", "agent: auto-fix for issue")
-ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "src/,app/").split(",") if p.strip()]
+ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "").split(",") if p.strip()]
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
@@ -36,8 +36,25 @@ def _mk_branch(issue_number: int) -> str:
 # ---------- seed parsing & snippet fetch ----------
 
 _TRACE_RE_1 = re.compile(r'File\s+"([^"]+\.py)"\s*,\s*line\s+(\d+)')
-_TRACE_RE_2 = re.compile(r'((?:src|app)/[^\s:]+\.py):(\d+)')
+_TRACE_RE_2 = re.compile(r'([^\s:]+\.py):(\d+)')
 _TARGET_HINT_RE = re.compile(r'^Target:\s*(\S+\.py)\s*$', re.MULTILINE)
+
+def _to_repo_relative(path: str) -> str:
+    p = (path or "").strip().replace("\\", "/")
+
+    # Drop leading absolute part up to repo name
+    repo_name = os.getenv("GITHUB_REPOSITORY", "").split("/", 1)[-1]
+    if repo_name and f"/{repo_name}/" in p:
+        p = p.split(f"/{repo_name}/", 1)[1]
+
+    # Relativize against workspace if possible
+    repo_root = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
+    try:
+        rel = os.path.relpath(p, repo_root).replace("\\", "/")
+    except Exception:
+        rel = p
+
+    return rel.lstrip("./").lstrip("/")
 
 def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
     """Return list of (path, line_or_None) parsed from issue body."""
@@ -47,7 +64,10 @@ def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
     for m in _TRACE_RE_1.finditer(text):
         out.append((m.group(1), int(m.group(2))))
     for m in _TRACE_RE_2.finditer(text):
-        out.append((m.group(1), int(m.group(2))))
+        raw = m.group(1)
+        line_no = int(m.group(2))
+        path = _to_repo_relative(raw)
+        out.append((path, line_no))
     m = _TARGET_HINT_RE.search(text)
     if m:
         out.append((m.group(1), None))
