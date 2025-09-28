@@ -198,7 +198,7 @@ pr_url, pr_number = create_pr(
 
 ## ☁️ Cloudflare Wrangler & GitHub Webhooks Integration
 
-TicketWatcher can also be deployed as a Cloudflare Worker using [Wrangler](https://developers.cloudflare.com/workers/wrangler/) to process GitHub webhooks in real-time, enabling ultra-fast automation without server hosting.
+TicketWatcher can also be deployed as a Cloudflare Worker using [Wrangler](https://developers.cloudflare.com/workers/wrangler/) to process GitHub webhooks in real-time, enabling fast automation without server hosting.
 
 ### How It Works
 
