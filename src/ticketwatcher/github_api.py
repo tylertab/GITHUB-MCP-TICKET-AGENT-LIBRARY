@@ -7,12 +7,22 @@ from typing import Optional, Dict, Any
 GITHUB_API = os.getenv("GITHUB_API", "https://api.github.com")
 # In GitHub Actions, this token is auto-injected with repo-scoped perms.
 TOKEN = os.getenv("GITHUB_TOKEN") or os.getenv("GH_TOKEN")
-REPO = os.getenv("GITHUB_REPOSITORY") or os.getenv("GITHUB_REPO")  # e.g. "owner/name"
 
-if not REPO:
-    raise RuntimeError("GITHUB_REPOSITORY or GITHUB_REPO not set")
 
-OWNER, NAME = REPO.split("/", 1)
+def _resolve_repo() -> tuple[str, str]:
+    repo = (
+        os.getenv("GITHUB_REPOSITORY")
+        or os.getenv("GITHUB_REPO")
+        or os.getenv("TICKETWATCHER_REPO")
+        or "local/local"
+    )
+    if "/" not in repo:
+        return "local", repo
+    owner, name = repo.split("/", 1)
+    return owner or "local", name or "local"
+
+
+OWNER, NAME = _resolve_repo()
 
 def _session() -> requests.Session:
     if not TOKEN:

@@ -1,7 +1,13 @@
-# Bug #5: uses undefined TAX_RATE when not provided via env/config.
+"""Payment utilities."""
+
+from __future__ import annotations
+
+
+DEFAULT_TAX_RATE = 0.08
+
 
 def calculate_total(subtotal: float, tax_rate: float | None = None) -> float:
-    # BUG: relies on global TAX_RATE that doesn't exist if tax_rate is None
-    if tax_rate is None:
-        return subtotal * (1 + TAX_RATE)  # NameError here
-    return round(subtotal * (1 + tax_rate), 2)
+    """Return the subtotal with tax applied, defaulting to 8% when unspecified."""
+
+    rate = DEFAULT_TAX_RATE if tax_rate is None else tax_rate
+    return round(subtotal * (1 + rate), 2)

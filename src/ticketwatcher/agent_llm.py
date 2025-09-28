@@ -5,6 +5,8 @@ from string import Template
 from typing import List, Dict, Any, Optional, Tuple
 from openai import OpenAI
 
+from .paths import allows_all_paths, is_path_allowed, parse_allowed_paths_env
+
 
 class TicketWatcherAgent:
     """
@@ -41,12 +43,10 @@ class TicketWatcherAgent:
     ):
         self.model = model or os.getenv("TICKETWATCHER_MODEL", "gpt-4o-mini")
         self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        env_allowed = os.getenv("ALLOWED_PATHS")
-        env_string = env_allowed if env_allowed is not None else "src/,app/"
         if allowed_paths is None:
             # Honor explicit []/ [""] inputs from callers by only falling back to
             # environment parsing when the argument is None.
-            self.allowed_paths = self._parse_allowed_paths_env(env_string)
+            self.allowed_paths = parse_allowed_paths_env(os.getenv("ALLOWED_PATHS"))
         else:
             # Copy to avoid accidental mutation and preserve an explicit [] which
             # now signifies "allow everything".
@@ -277,27 +277,11 @@ OUTPUT MUST BE A SINGLE JSON OBJECT ONLY.
             return False
         if self._allows_all_paths():
             return True
-        return any(path.startswith(pfx) for pfx in self.allowed_paths)
+        return is_path_allowed(path, self.allowed_paths)
 
     def _allows_all_paths(self) -> bool:
         """True when the agent is configured without path restrictions."""
-        return (not self.allowed_paths) or ("" in self.allowed_paths)
-
-    @staticmethod
-    def _parse_allowed_paths_env(s: str) -> List[str]:
-        raw_parts = [(p or "").strip() for p in (s or "").split(",")]
-        allow_all = any(p == "" for p in raw_parts)
-
-        parts = [p for p in raw_parts if p]
-        # normalize to end with slash where appropriate
-        norm = []
-        for p in parts:
-            norm.append(p if p.endswith("/") else (p + ("/" if "." not in p else "")))
-
-        if not norm:
-            # An explicit empty entry (or a completely empty env var) means allow all.
-            return [""] if allow_all else ["src/"]
-        return norm
+        return allows_all_paths(self.allowed_paths)
 
     def _format_allowed_paths_for_prompt(self) -> str:
         if self._allows_all_paths():
