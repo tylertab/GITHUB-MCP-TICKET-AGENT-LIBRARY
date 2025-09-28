@@ -410,7 +410,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     feedback_parts = []
     # 3) Enhanced feedback when agent asks for more context
     if result.get("action") == "request_context":
-        feedback_parts = ["⚠️ I need more context to propose a safe fix."]
+        feedback_parts = []
         
         # Report what we found and what was missing from the original issue
         if found_files:
