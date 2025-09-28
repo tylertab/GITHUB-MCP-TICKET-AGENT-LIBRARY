@@ -34,7 +34,7 @@ ALLOWED_PATHS = _load_allowed_paths()
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
-REPO_ROOT = os.getenv("GITHUB_WORKSPACE")
+REPO_ROOT = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
 REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
 
 # ----------------------------------------------------
@@ -46,8 +46,6 @@ def _mk_branch(issue_number: int) -> str:
 
 # ---------- seed parsing & snippet fetch ----------
 
-REPO_ROOT = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
-REPO_NAME = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1] or os.path.basename(REPO_ROOT)
 
 _RE_PY_FILELINE = re.compile(r'File\s+"([^"]+)"\s*,\s*line\s+(\d+)\b')
 _RE_GENERIC_PATHLINE = re.compile(r'([^\s\'",)\]]+):(\d+)\b')  # token:line
