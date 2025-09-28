@@ -12,6 +12,7 @@ from ticketwatcher.paths import parse_allowed_paths_env
         ("   ", [""]),
         ("src/,app/,", ["src/", "app/"]),
         ("src/app.py,lib", ["src/app.py", "lib/"]),
+        ("src/,src/", ["src/"]),
     ],
 )
 def test_parse_allowed_paths_env(raw, expected, monkeypatch):
