@@ -4,10 +4,7 @@
 TicketWatcher aims to ingest issue context, fetch relevant code snippets, and drive an automated fix loop via `TicketWatcherAgent`. The current implementation works end-to-end for narrow cases but exhibits fragility across configuration, module boundaries, and prompting. This document records key findings while debugging recent workflow failures and proposes incremental improvements.
 
 ## Configuration & Path Allow-Listing
-* **Default allow-list is too restrictive.** Both the handler seed extraction and the agent share the `ALLOWED_PATHS` list, which resolves to `['src/', 'app/']` when the environment variable is unset.【F:src/ticketwatcher/handlers.py†L21-L31】【F:src/ticketwatcher/agent_llm.py†L32-L64】 Stack traces that reference files in `test/`, `scripts/`, or the worker package are silently ignored, so the agent never sees the failing code. Consider one of:
-  * Treating an empty environment variable as "allow everything" by default, only opting into narrow scopes when explicitly configured.
-  * Expanding the default list to include `test/`, `scripts/`, and `ticketwatcher-worker/`, or dynamically whitelisting prefixes observed in the incoming stack trace.
-  * Surfacing a warning when the seed extractor discards paths due to the allow-list, so debugging misconfiguration is easier.
+* **Default allow-list now allows the full repo.** Both the handler seed extraction and the agent share the `ALLOWED_PATHS` list, which resolves to `['']` when the environment variable is unset.【F:src/ticketwatcher/handlers.py†L21-L31】【F:src/ticketwatcher/agent_llm.py†L32-L64】【F:src/ticketwatcher/config.py†L32-L63】 Stack traces that reference files in `test/`, `scripts/`, or the worker package are now honored automatically. Teams that need stricter scopes should set `ALLOWED_PATHS` explicitly and rely on the helper's trailing-comma safeguards.
 
 * **Agent request sanitization inherits the same limitation.** `_sanitize_needs` discards the model's follow-up requests if the path falls outside the allow-list.【F:src/ticketwatcher/agent_llm.py†L118-L154】 Without a looser default, the agent cannot recover by asking for the missing file later.
 

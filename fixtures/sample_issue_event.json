@@ -1,0 +1,25 @@
+{
+  "action": "labeled",
+  "issue": {
+    "number": 42,
+    "title": "Login failure after upgrade",
+    "body": "```\nTraceback (most recent call last):\n  File \"src/app/auth.py\", line 42, in get_user_profile\n    return user[\"name\"]\nKeyError: 'name'\n```",
+    "labels": [
+      {"name": "agent-fix"}
+    ],
+    "html_url": "https://github.com/example/example/issues/42",
+    "user": {
+      "login": "octocat"
+    }
+  },
+  "repository": {
+    "full_name": "example/example",
+    "name": "example",
+    "owner": {
+      "login": "example"
+    }
+  },
+  "sender": {
+    "login": "octocat"
+  }
+}

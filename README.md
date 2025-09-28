@@ -103,6 +103,7 @@ Follow these steps to get a local development environment running in under 10 mi
 ### 2. Clone the Repository
 ```bash
 git clone https://github.com/tylertab/GITHUB-MCP-TICKET-AGENT-LIBRARY.git
+
 cd GITHUB-MCP-TICKET-AGENT-LIBRARY
 ```
 
@@ -125,7 +126,7 @@ Create a `.env` file (optional but recommended) or export the variables directly
 ```bash
 export OPENAI_API_KEY="sk-..."
 export GITHUB_TOKEN="ghp_..."           # Optional for read-only operations
-export ALLOWED_PATHS="src/,app/"        # Adjust as needed
+export ALLOWED_PATHS=""                 # Allow full repo (restrict by listing prefixes)
 export TICKETWATCHER_TRIGGER_LABELS="agent-fix,auto-pr"
 ```
 Additional configuration knobs are documented in [Configuration Reference](#-configuration-reference).
@@ -177,7 +178,7 @@ Comment `/agent fix` (or your configured command) on an existing issue to force 
 | `TICKETWATCHER_TRIGGER_LABELS` | `agent-fix,auto-pr` | Labels that cause the workflow to run |
 | `TICKETWATCHER_BRANCH_PREFIX` | `agent-fix/` | Prefix for generated branches |
 | `TICKETWATCHER_PR_TITLE_PREFIX` | `agent: auto-fix for issue` | Applied to every draft PR title |
-| `ALLOWED_PATHS` | `src/,app/` | Comma-separated list of directories/files the agent may modify (`""` means allow all) |
+| `ALLOWED_PATHS` | `` (empty) | Comma-separated list of directories/files the agent may modify (`""` means allow all) |
 | `MAX_FILES` | `4` | Maximum number of files that can be modified per run |
 | `MAX_LINES` | `200` | Maximum total changed lines in a diff |
 | `DEFAULT_AROUND_LINES` | `60` | Context lines to fetch around each snippet |

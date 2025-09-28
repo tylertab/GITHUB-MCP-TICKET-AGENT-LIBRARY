@@ -43,12 +43,11 @@ class TicketWatcherAgent:
     ):
         self.model = model or os.getenv("TICKETWATCHER_MODEL", "gpt-4o-mini")
         self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        env_allowed = os.getenv("ALLOWED_PATHS")
-        env_string = env_allowed if env_allowed is not None else "src/,app/"
         if allowed_paths is None:
             # Honor explicit []/ [""] inputs from callers by only falling back to
             # environment parsing when the argument is None.
-            self.allowed_paths = parse_allowed_paths_env(env_string)
+            self.allowed_paths = parse_allowed_paths_env(os.getenv("ALLOWED_PATHS"))
+
         else:
             # Copy to avoid accidental mutation and preserve an explicit [] which
             # now signifies "allow everything".

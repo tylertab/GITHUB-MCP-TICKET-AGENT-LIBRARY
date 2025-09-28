@@ -8,17 +8,25 @@ from typing import Iterable, List
 def parse_allowed_paths_env(raw: str | None) -> List[str]:
     """Parse a comma-separated env string into normalized allowlist prefixes."""
     if raw is None:
-        return ["src/"]
+        # No configuration provided -> allow all paths so stack traces can be
+        # honored without extra setup. Users can still opt-in to restrictions by
+        # setting ALLOWED_PATHS explicitly.
+        return [""]
 
     if raw.strip() == "":
         return [""]
 
     normalized: List[str] = []
+    seen: set[str] = set()
     for part in raw.split(","):
         trimmed = (part or "").strip()
         if not trimmed:
             continue
-        normalized.append(_normalize_prefix(trimmed))
+        prefix = _normalize_prefix(trimmed)
+        if prefix in seen:
+            continue
+        seen.add(prefix)
+        normalized.append(prefix)
 
     if not normalized:
         # A string that only contained commas or whitespace still means "allow all".
