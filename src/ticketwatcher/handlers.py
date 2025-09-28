@@ -22,7 +22,15 @@ from .agent_llm import TicketWatcherAgent  # the class we just finished
 TRIGGER_LABELS = set(os.getenv("TICKETWATCHER_TRIGGER_LABELS", "agent-fix,auto-pr").split(","))
 BRANCH_PREFIX  = os.getenv("TICKETWATCHER_BRANCH_PREFIX", "agent-fix/")
 PR_TITLE_PREF  = os.getenv("TICKETWATCHER_PR_TITLE_PREFIX", "agent: auto-fix for issue")
-ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "").split(",") if p.strip()]
+# Allowed path prefixes forwarded to the agent. [] or [""] means "no restrictions".
+def _load_allowed_paths() -> List[str]:
+    raw = os.getenv("ALLOWED_PATHS")
+    if raw is None:
+        return TicketWatcherAgent._parse_allowed_paths_env("src/,app/")
+    return TicketWatcherAgent._parse_allowed_paths_env(raw)
+
+
+ALLOWED_PATHS = _load_allowed_paths()
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
@@ -345,6 +353,8 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
     
     # 2) Call agent (two-round loop)
     agent = TicketWatcherAgent(
+        # Pass the prefixes through unchanged so the agent sees the same
+        # allow-all or allowlist semantics documented above.
         allowed_paths=ALLOWED_PATHS,
         max_files=MAX_FILES,
         max_total_lines=MAX_LINES,

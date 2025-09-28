@@ -41,9 +41,16 @@ class TicketWatcherAgent:
     ):
         self.model = model or os.getenv("TICKETWATCHER_MODEL", "gpt-4o-mini")
         self.client = OpenAI(api_key=api_key or os.getenv("OPENAI_API_KEY"))
-        self.allowed_paths = allowed_paths or self._parse_allowed_paths_env(
-            os.getenv("ALLOWED_PATHS", "src/,app/")
-        )
+        env_allowed = os.getenv("ALLOWED_PATHS")
+        env_string = env_allowed if env_allowed is not None else "src/,app/"
+        if allowed_paths is None:
+            # Honor explicit []/ [""] inputs from callers by only falling back to
+            # environment parsing when the argument is None.
+            self.allowed_paths = self._parse_allowed_paths_env(env_string)
+        else:
+            # Copy to avoid accidental mutation and preserve an explicit [] which
+            # now signifies "allow everything".
+            self.allowed_paths = list(allowed_paths)
         self.max_files = int(os.getenv("MAX_FILES", str(max_files)))
         self.max_total_lines = int(os.getenv("MAX_LINES", str(max_total_lines)))
         self.default_around_lines = int(
@@ -176,7 +183,7 @@ OUTPUT MUST BE A SINGLE JSON OBJECT ONLY.
         return Template(self.user_template).safe_substitute(
             ticket_title=ticket_title or "",
             ticket_body_trimmed=ticket_body_trimmed,
-            allowed_paths_csv=",".join(self.allowed_paths),
+            allowed_paths_csv=self._format_allowed_paths_for_prompt(),
             max_files=self.max_files,
             max_total_lines=self.max_total_lines,
             around_lines=self.default_around_lines,
@@ -265,17 +272,36 @@ OUTPUT MUST BE A SINGLE JSON OBJECT ONLY.
         return cleaned
 
     def _path_allowed(self, path: str) -> bool:
+        """Return True if the repo-relative path satisfies the allowlist."""
         if not path:
             return False
+        if self._allows_all_paths():
+            return True
         return any(path.startswith(pfx) for pfx in self.allowed_paths)
+
+    def _allows_all_paths(self) -> bool:
+        """True when the agent is configured without path restrictions."""
+        return (not self.allowed_paths) or ("" in self.allowed_paths)
 
     @staticmethod
     def _parse_allowed_paths_env(s: str) -> List[str]:
-        parts = [p.strip() for p in (s or "").split(",") if p.strip()]
+        raw_parts = [(p or "").strip() for p in (s or "").split(",")]
+        allow_all = any(p == "" for p in raw_parts)
+
+        parts = [p for p in raw_parts if p]
         # normalize to end with slash where appropriate
         norm = []
         for p in parts:
             norm.append(p if p.endswith("/") else (p + ("/" if "." not in p else "")))
-        return norm or ["src/"]
+
+        if not norm:
+            # An explicit empty entry (or a completely empty env var) means allow all.
+            return [""] if allow_all else ["src/"]
+        return norm
+
+    def _format_allowed_paths_for_prompt(self) -> str:
+        if self._allows_all_paths():
+            return "* (all paths allowed)"
+        return ",".join(self.allowed_paths)
 
 
