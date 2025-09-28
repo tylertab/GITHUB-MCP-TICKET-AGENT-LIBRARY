@@ -36,53 +36,74 @@ def _mk_branch(issue_number: int) -> str:
 
 # ---------- seed parsing & snippet fetch ----------
 
-_TRACE_RE_1 = re.compile(r'File\s+"([^"]+\.py)"\s*,\s*line\s+(\d+)')
-_TRACE_RE_2 = re.compile(r'([^\s:]+\.py):(\d+)')
-_TARGET_HINT_RE = re.compile(r'^Target:\s*(\S+\.py)\s*$', re.MULTILINE)
+_TRACE_RE_1 = re.compile(r'File\s+"([^"]+)"\s*,\s*line\s+(\d+)\b')     # Python style
+_TRACE_RE_2 = re.compile(r'([^\s:]+):(\d+)\b')                          # any token:line
+_TARGET_HINT_RE = re.compile(r'^\s*Target:\s*(.+?)\s*$', re.MULTILINE)  # Target: path[:line]
+_BRANCH_RE = re.compile(r'^\s*(?:Branch|Ref):\s*([^\s]+)\s*$', re.MULTILINE)  # Branch: name-or-sha
+
+def _sanitize_path_token(tok: str) -> str:
+    tok = (tok or "").strip().strip('`"\'')
+
+    # trim trailing punctuation that often follows paths in traces
+    tok = re.sub(r'[\'"\s,)\]>]+$', '', tok)
+    return tok
 
 def _to_repo_relative(path: str) -> str:
     p = (path or "").strip().replace("\\", "/")
 
-    # Drop leading absolute part up to repo name
-    repo_name = os.getenv("GITHUB_REPOSITORY", "").split("/", 1)[-1]
+    # Trim absolute prefix up to repo name when present
+    repo_name = (os.getenv("GITHUB_REPOSITORY") or "").split("/", 1)[-1]
     if repo_name and f"/{repo_name}/" in p:
         p = p.split(f"/{repo_name}/", 1)[1]
 
-    # Relativize against workspace if possible
+    # Relativize to workspace
     repo_root = os.getenv("GITHUB_WORKSPACE") or os.getcwd()
     try:
-        rel = os.path.relpath(p, repo_root).replace("\\", "/")
+        p = os.path.relpath(p, repo_root).replace("\\", "/")
     except Exception:
-        rel = p
+        pass
 
-    return rel.lstrip("./").lstrip("/")
+    return p.lstrip("./").lstrip("/")
+
 
 def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
-    """Return list of (path, line_or_None) parsed from issue body."""
     out: List[Tuple[str, int | None]] = []
     if not text:
         return out
+
+    # 1) Python “File "...", line N”
     for m in _TRACE_RE_1.finditer(text):
-        out.append((m.group(1), int(m.group(2))))
-    for m in _TRACE_RE_2.finditer(text):
-        raw = m.group(1)
-        line_no = int(m.group(2))
+        raw = _sanitize_path_token(m.group(1))
         path = _to_repo_relative(raw)
+        out.append((path, int(m.group(2))))
+
+    # 2) Generic “token:LINE”
+    for m in _TRACE_RE_2.finditer(text):
+        raw = _sanitize_path_token(m.group(1))
+        path = _to_repo_relative(raw)
+        out.append((path, int(m.group(2))))
+
+    # 3) Target: path[:line]
+    for m in _TARGET_HINT_RE.finditer(text):
+        raw = _sanitize_path_token(m.group(1))
+        if ":" in raw and raw.rsplit(":", 1)[-1].isdigit():
+            raw_path, raw_line = raw.rsplit(":", 1)
+            path, line_no = _to_repo_relative(raw_path), int(raw_line)
+        else:
+            path, line_no = _to_repo_relative(raw), None
         out.append((path, line_no))
-    m = _TARGET_HINT_RE.search(text)
-    if m:
-        out.append((m.group(1), None))
-    # de-dupe, keep order
+
+    # De-dupe, preserve order, cap at 5
     seen = set()
-    uniq = []
+    uniq: List[Tuple[str, int | None]] = []
     for p, ln in out:
         key = (p, ln or 0)
-        if key in seen:
-            continue
-        seen.add(key)
-        uniq.append((p, ln))
-    return uniq[:5]  # bound the seed list
-
+        if key not in seen:
+            seen.add(key)
+            uniq.append((p, ln))
+            if len(uniq) >= 5:
+                break
+    return uniq
 
 def _path_allowed(path: str) -> bool:
     if ALLOW_ALL:
@@ -288,7 +309,9 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
 
     title = issue.get("title", "")
     body  = issue.get("body", "") or ""
-    base  = os.getenv("TICKETWATCHER_BASE_BRANCH") or get_default_branch()
+    m_branch = _BRANCH_RE.search(body or "")
+    explicit_ref = m_branch.group(1) if m_branch else None
+    base = explicit_ref or os.getenv("TICKETWATCHER_BASE_BRANCH") or get_default_branch()
 
     # 1) Build seed snippets from traceback/target hints
     seed_specs = _paths_from_issue_text(body)
