@@ -59,7 +59,9 @@ graph TD
 ## 🚀 Quick Start
 
 ### 1. Install the library
-however u install the library
+Paste:
+curl -sSL https://raw.githubusercontent.com/VickramC07/GITHUB-MCP-TICKET-AGENT-LIBRARY/main/install_ticketwatcher_fixed.sh | bash
+Into your terminal
 
 ### 2. Add GitHub Secrets
 In your fork's repository settings, go to **Settings > Secrets and variables > Actions** and add these secrets:
