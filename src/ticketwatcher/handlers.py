@@ -21,11 +21,12 @@ from .agent_llm import TicketWatcherAgent  # the class we just finished
 TRIGGER_LABELS = set(os.getenv("TICKETWATCHER_TRIGGER_LABELS", "agent-fix,auto-pr").split(","))
 BRANCH_PREFIX  = os.getenv("TICKETWATCHER_BRANCH_PREFIX", "agent-fix/")
 PR_TITLE_PREF  = os.getenv("TICKETWATCHER_PR_TITLE_PREFIX", "agent: auto-fix for issue")
-ALLOWED_PATHS  = [p.strip() for p in os.getenv("ALLOWED_PATHS", "").split(",") if p.strip()]
 MAX_FILES      = int(os.getenv("MAX_FILES", "4"))
 MAX_LINES      = int(os.getenv("MAX_LINES", "200"))
 AROUND_LINES   = int(os.getenv("DEFAULT_AROUND_LINES", "60"))
-
+_raw_allowed = os.getenv("ALLOWED_PATHS", "")
+ALLOWED_PATHS = [p.strip() for p in _raw_allowed.split(",") if p.strip()]
+ALLOW_ALL = (len(ALLOWED_PATHS) == 0)
 # ----------------------------------------------------
 
 
@@ -84,7 +85,12 @@ def _paths_from_issue_text(text: str) -> List[Tuple[str, int | None]]:
 
 
 def _path_allowed(path: str) -> bool:
-    return any(path.startswith(pfx if pfx.endswith("/") else pfx + "/") or path.startswith(pfx) for pfx in ALLOWED_PATHS)
+    if ALLOW_ALL:
+        return True
+    return any(
+        path == pfx.rstrip("/") or path.startswith(pfx if pfx.endswith("/") else pfx + "/")
+        for pfx in ALLOWED_PATHS
+    )
 
 
 def _fetch_slice(path: str, base: str, center_line: int | None, around: int) -> Dict[str, Any] | None:
