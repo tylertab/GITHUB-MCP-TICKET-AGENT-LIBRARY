@@ -85,15 +85,9 @@ graph TD
 ```
 
 ## 🛠️ Technologies Used
-### Core
 - **Python 3.9+** with typing and dataclasses
 - **OpenAI GPT-4o** (or GPT-4) for agent reasoning
 - **GitHub REST & GraphQL APIs** via `requests`
-
-### Supporting Libraries
-- `pytest` for tests
-- `pydantic`-style validation (lightweight dataclasses instead)
-- `python-dotenv` (optional) for local environment variable loading
 
 ## 🧭 Onboarding Guide
 Follow these steps to get a local development environment running in under 10 minutes.
@@ -108,7 +102,7 @@ Follow these steps to get a local development environment running in under 10 mi
 
 ### 2. Clone the Repository
 ```bash
-git clone https://github.com/<your-username>/GITHUB-MCP-TICKET-AGENT-LIBRARY.git
+git clone https://github.com/tylertab/GITHUB-MCP-TICKET-AGENT-LIBRARY.git
 cd GITHUB-MCP-TICKET-AGENT-LIBRARY
 ```
 
