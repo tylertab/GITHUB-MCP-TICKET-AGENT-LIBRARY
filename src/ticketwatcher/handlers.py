@@ -407,7 +407,7 @@ def handle_issue_event(event: Dict[str, Any]) -> str | None:
         return results
 
     result = agent.run_two_rounds(title, body, seed_snips, fetch_callback=_fetch_callback)
-    
+    feedback_parts = []
     # 3) Enhanced feedback when agent asks for more context
     if result.get("action") == "request_context":
         feedback_parts = ["⚠️ I need more context to propose a safe fix."]
