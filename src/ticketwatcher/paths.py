@@ -10,20 +10,19 @@ def parse_allowed_paths_env(raw: str | None) -> List[str]:
     if raw is None:
         return ["src/"]
 
-    raw_parts = [(part or "").strip() for part in raw.split(",")]
-    parts = [p for p in raw_parts if p]
-    allow_all = any(part == "" for part in raw_parts)
+    if raw.strip() == "":
+        return [""]
 
     normalized: List[str] = []
-    for part in parts:
-        normalized.append(_normalize_prefix(part))
+    for part in raw.split(","):
+        trimmed = (part or "").strip()
+        if not trimmed:
+            continue
+        normalized.append(_normalize_prefix(trimmed))
 
     if not normalized:
-        # Only treat it as "allow everything" when the env var is explicitly empty.
-        return [""] if allow_all else ["src/"]
-
-    if allow_all and "" not in normalized:
-        normalized.append("")
+        # A string that only contained commas or whitespace still means "allow all".
+        return [""]
 
     return normalized
 
